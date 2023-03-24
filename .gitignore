@@ -1,0 +1,5 @@
+build/*
+.buildpath
+.project
+.settings
+.idea/*

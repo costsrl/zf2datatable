@@ -1,0 +1,29 @@
+<?php if(isset($this->childModelTop)):?>
+<div class="row-fluid">
+	<div class="col-md-12 text-center">
+    <?php echo $this->childModelTop;?>
+    </div>
+</div>
+<?php endif;?>
+<div class="row-fluid" id="toolbar" style="margin-top:3px">
+     <!-- Actions (add, ...) -->
+    <div class="row"  style="background-color:#DEE1EA;width:100%">
+        <div class="col-md-12 text-center">
+            <span style="background-color:#DEE1EA;color:#383630;font-size:28pt;font-weight:bold"><h5><strong><?php echo $this->title; ?></strong></h5></span>
+        </div>
+    </div>
+    <div class="col-md-12">
+        <?php if($this->isAllowFilter):?>
+        <a href="#" id="clearfilter" class="btn btn-primary"><?php echo $this->translate("Clear Filter")?></a>
+        <?php endif;?>
+        <?php if($this->isAllowAddCrud):?>
+        <a href="?op=i&id=0&gridID=<?php echo $this->gridID?>"  class="btn btn-primary"><?php echo $this->translate($this->buttonLabel)?></a>
+        <?php endif;?>
+        <?php if(is_array($this->additionalButton)):?>
+                <?php foreach ($this->additionalButton as $button):?>
+                    <a href="<?php echo $button['href'];?>"  class="btn btn-primary" name="<?php echo $button['name'];?>"  id="<?php echo $button['id'];?>"><?php echo $this->translate($button['label'])?></a>
+                <?php endforeach;?>
+        <?php endif;?>
+        <?php echo $this->partial('zf2datatable/toolbar/export');?>
+    </div>
+</div>

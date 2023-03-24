@@ -1,0 +1,656 @@
+<?php
+namespace Zf2datatable\DataSource;
+
+use Zf2datatable\Column;
+use Laminas\Paginator\Adapter\DbSelect;
+use Laminas\Db\Sql;
+use Laminas\Db\Sql\Expression;
+use Laminas\Db\Sql\Insert;
+use Laminas\Db\Sql\Update;
+use Laminas\Db\Sql\Delete;
+use Laminas\Db\Sql\Where;
+use Zf2datatable\Event\Zf2datatableEvent;
+
+
+class LaminasSelect extends AbstractDataSource
+{
+
+    /**
+     * @var string
+     */
+    const FOREIGN_KEY = 'FOREIGN KEY';
+
+    /**
+     *
+     * @var Sql\Select
+     */
+    protected  $select;
+
+
+    /**
+     *
+     * @var Sql\Select
+     */
+    protected  $selectDetail;
+
+
+    /**
+     *
+     * @var \Laminas\Db\Sql\Sql
+     */
+    protected  $sqlObject;
+
+
+    protected  $foreign_key;
+
+
+	/**
+     * Data source
+     *
+     * @param mixed $data
+     */
+    public function __construct($data=null)
+    {
+        /*if ($data instanceof Sql\Select) {
+            $this->select = $data;
+        } else {
+            throw new \InvalidArgumentException('A instance of Laminas\Db\SqlSelect is needed to use this dataSource!');
+        }*/
+    }
+
+
+//    public function init($data){
+//        if ($data instanceof Sql\Select) {
+//            $this->select = $data;
+//        } else {
+//            throw new \InvalidArgumentException('A instance of Laminas\Db\SqlSelect is needed to use this dataSource!');
+//        }
+//
+//        if($this->getServiceLocator()->has('service_cache') && $this->getServiceLocator()->get('cache_metadata')['mode']=='enabled'){
+//            $this->setCache($this->getServiceLocator()->get('service_cache'));
+//        }
+//
+//        return $this;
+//    }
+
+
+    public function init($data){
+        if ($data instanceof Sql\Select) {
+            $this->select = $data;
+        } else {
+            throw new \InvalidArgumentException('A instance of Zend\Db\SqlSelect is needed to use this dataSource!');
+        }
+
+        $aCacheEnable = $this->getServiceLocator()->get('cache_metadata');
+        if($this->getServiceLocator()->has('metadata_service_cache') && $aCacheEnable['mode']=='enabled'){
+            $this->setCache($this->getServiceLocator()->get('metadata_service_cache'));
+        }
+        else{
+            if($this->getServiceLocator()->has('service_cache') && $aCacheEnable['mode']=='enabled'){
+                $this->setCache($this->getServiceLocator()->get('service_cache'));
+                $this->getCache()->clearExpired();
+            }
+        }
+
+        return $this;
+    }
+
+
+    /**
+     *
+     * @return Sql\Select
+     */
+    public function getData()
+    {
+        return $this->select;
+    }
+
+
+    /**
+     *
+     * @return Sql\Select
+     */
+    public function getDataDetail()
+    {
+    	if($this->selectDetail == null){
+            $this->selectDetail = $this->select;
+    	}
+    	return $this->selectDetail;
+    }
+
+
+    /**
+     * @param \Laminas\Db\Sql\Select $selectDetail
+     */
+    public function setSelectDetail($selectDetail) {
+    	$this->selectDetail = $selectDetail;
+    }
+
+
+    public function setAdapter($adapterOrSqlObject)
+    {
+        if ($adapterOrSqlObject instanceof \Laminas\Db\Sql\Sql) {
+            $this->sqlObject = $adapterOrSqlObject;
+        } elseif ($adapterOrSqlObject instanceof \Laminas\Db\Adapter\Adapter) {
+            $this->sqlObject = new \Laminas\Db\Sql\Sql($adapterOrSqlObject);
+        } else {
+            throw new \InvalidArgumentException('Object of "Laminas\Db\Sql\Sql" or "Laminas\Db\Adapter\Adapter" needed.');
+        }
+    }
+
+    /**
+     *
+     * @return \Laminas\Db\Sql\Sql
+     */
+    public function getAdapter()
+    {
+        return $this->sqlObject;
+    }
+
+public function execute()
+    {
+        if ($this->getAdapter() === null || ! $this->getAdapter() instanceof \Laminas\Db\Sql\Sql) {
+            throw new \Exception('Object "Laminas\Db\Sql\Sql" is missing, please call setAdapter() first!');
+        }
+
+        $platform = $this->getAdapter()
+            ->getAdapter()
+            ->getPlatform();
+
+        $select = $this->getData();
+
+
+        /*
+         * Step 1) Apply needed columns
+         */
+        $selectColumns = array();
+        foreach ($this->getColumns() as $column) {
+            if ($column instanceof Column\Select) {
+
+                if($column->getSelectType() == Column\AbstractColumn::$selectFieldType['Literal'])
+                        $colString = $column->getSelectPart1();
+                else
+                    $colString = $column->getSelectExpression();
+
+                if ($column->getSelectPart2() != '') {
+                    if($column->getSelectType() == Column\AbstractColumn::$selectFieldType['Literal'])
+                        $colString = new Expression($platform->quoteIdentifier($colString) . $platform->getIdentifierSeparator() . $platform->quoteIdentifier($column->getSelectPart2()));
+                    else
+                        $colString = $column->getSelectExpression();
+                }
+
+                $selectColumns[$column->getUniqueId()] = $colString;
+            }
+        }
+
+
+        $select->columns($selectColumns, false);
+
+        $joins = $select->getRawState('joins');
+        $select->reset('joins');
+        foreach ($joins as $join) {
+            $select->join($join['name'], $join['on'], array(), $join['type']);
+        }
+
+
+        /*
+         * Step 2) Apply sorting
+         */
+        if (count($this->getSortConditions()) > 0) {
+            // Minimum one sort condition given -> so reset the default orderBy
+            $select->reset(Sql\Select::ORDER);
+
+            foreach ($this->getSortConditions() as $sortCondition) {
+                $column = $sortCondition['column'];
+
+                //$select->order($column->getUniqueId() . ' ' . $sortCondition['sortDirection']);
+                if($column->getSelectType() == Column\AbstractColumn::$selectFieldType['Literal'])
+                    $select->order($column->getSelectPart1(). $platform->getIdentifierSeparator().$column->getSelectPart2() . ' ' . $sortCondition['sortDirection']);
+                else{
+                    $sqlexpression = $column->getSelectExpression()->getExpressionData()[0];
+                    $select->order(new \Laminas\Db\Sql\Predicate\Expression($sqlexpression.' '.$sortCondition['sortDirection'])) ;
+                }
+
+            }
+        }
+
+
+
+        /*
+         * Step 3) Apply filters
+         */
+        $filterColumn = new LaminasSelect\Filter($this->getAdapter(), $select);
+
+        //var_dump($this->getFilters());
+
+
+        foreach ($this->getFilters() as $filter) {
+
+            /* @var $filter \ZfcDatagrid\Filter */
+            if ($filter->isColumnFilter() === true) {
+                $filterColumn->applyFilter($filter);
+            }
+        }
+
+        //var_dump($this->getFilters());
+
+
+        /*
+         * Step 4) Pagination
+         *
+         *
+         */
+        /*
+        echo "---->".$this->getAdapter()->getSqlStringForSqlObject($select);
+        echo "---->".$this->getAdapter()->getSqlStringForSqlObject($select)."<br />";
+        echo "---->".$this->getAdapter()->getSqlStringForSqlObject($select);
+        echo "---->".$this->getAdapter()->getSqlStringForSqlObject($select)."<br />";
+*/
+
+
+        //echo "---->".$this->getAdapter()->getSqlStringForSqlObject($select)."<br />";
+        $this->setPaginatorAdapter(new DbSelect($select, $this->getAdapter()));
+    }
+    /**
+     *
+     * @throws \Exception
+     */
+    public function executeDetail($filterValue=array())
+    {
+    	if ($this->getAdapter() === null || ! $this->getAdapter() instanceof \Laminas\Db\Sql\Sql) {
+    		throw new \Exception('Object "Laminas\Db\Sql\Sql" is missing, please call setAdapter() first!');
+    	}
+
+    	$alias='';
+    	$platform = $this->getAdapter()
+    	->getAdapter()
+    	->getPlatform();
+
+    	$select = $this->getDataDetail();
+    	$where = new \Laminas\Db\Sql\Where();
+
+    	$mainTable = $select->getRawState('table');
+    	if(is_array($mainTable)){
+    		$alias=key($mainTable).".";
+    	}
+
+    	//$filterValue = [];
+    	$oConstraints = $this->getMetaDataInfo()[1]["constraints"];
+    	$constraints= $oConstraints[0]->getColumns();
+
+    	//var_dump($filterValue);
+    	if(is_array($filterValue)){
+        	foreach($constraints as $constraint ){
+        		if(array_key_exists($constraint,$filterValue))
+        			$where->equalTo($alias.$constraint, $filterValue[$constraint]);
+        	}
+    	}
+    	$statement = $this->getAdapter()->prepareStatementForSqlObject($select->where($where));
+    	//echo $this->getAdapter()->getSqlStringForSqlObject($select->where($where));
+
+    	return $result = $statement->execute()->current();
+    }
+
+    public function executeExternalQuery($source=array(),$where)
+    {
+        $source =array('table'=>'group','id'=>'id','value'=>'name');
+        $select = $this->getData();
+        $sqlclone = clone $select;
+
+        $sqlclone->reset(Sql\Select::COLUMNS);
+        $sqlclone->reset(Sql\Select::JOINS);
+        $sqlclone->reset(Sql\Select::ORDER);
+
+        $sqlclone->from($source['table'])->columns(array($source['id'],$source['value']));
+        if(is_array($where) || $where instanceof \Laminas\Db\Sql\Where){
+            $sqlclone->where($where);
+        }
+
+        $statement = $this->getAdapter()->prepareStatementForSqlObject($sqlclone);
+        //echo $this->getAdapter()->getSqlStringForSqlObject($sqlclone);
+
+        $results = $statement->execute();
+        $source_value = array();
+        foreach ($results as $result){
+            $source_value[$result['id']]=$result['name'];
+        }
+
+        return $source_value;
+
+    }
+
+    /** to populate **/
+    public function findByIdentity($where){
+    	$sql = $this->getAdapter();
+    	$platform = $this->getAdapter()
+    	->getAdapter()
+    	->getPlatform();
+
+
+    	$select = $sql->select();
+
+
+        $sqlclone = clone $select;
+
+        $sqlclone->reset(Sql\Select::COLUMNS);
+        $sqlclone->reset(Sql\Select::JOINS);
+        $sqlclone->reset(Sql\Select::ORDER);
+        //$sqlclone->reset(Sql\Select::FROM);
+
+    	$filterColumn = new LaminasSelect\Filter($this->getAdapter(), $sqlclone);
+    	foreach ($this->getFilters() as $filter) {
+
+    	    /* @var $filter \ZfcDatagrid\Filter */
+    	    if ($filter->isColumnFilter() === true) {
+    	        //$filterColumn->applyFilter($filter);
+    	    }
+    	}
+    	$table = $this->table;
+    	if($this->alias_table){
+    	    $table = array($this->alias_table=> $this->table);
+    	}
+
+
+    	$sqlclone->columns(array(Sql\Select::SQL_STAR))->from($table)->where($where);
+        //echo "*****".$sql->getSqlStringForSqlObject($sqlclone);
+        //die();
+
+    	$statement = $sql->prepareStatementForSqlObject($sqlclone);
+    	$result = $statement->execute()->current ();
+
+
+    	if(!is_array( $result ) && !$result instanceof \Traversable){
+    	    return null;
+    	}
+
+    	return new \ArrayObject($result);
+    }
+
+
+    public function getDefaultBindObject(){
+        return new \ArrayObject();
+    }
+
+
+
+    /**
+     * @param array $data
+     */
+    public function update($data, $where,$contextParams=null){
+        $event = new Zf2datatableEvent();
+        $sql = $this->getAdapter();
+        $sql->setTable($this->table);
+
+
+        $shortCircuit = function ($r){
+            if (is_array($r) || $r instanceof \ArrayObject) {
+                return true;
+            }
+            return false;
+        };
+
+
+        $event->setName('pre.'.__FUNCTION__);
+        $event->setTarget($sql);
+        $event->setParams($data);
+        $event->setContext($contextParams);
+        $event->stopPropagation(false); // Clear before triggering
+        //$results = $this->getEventManager()->Until($shortCircuit, $event);
+        //$results= $this->getEventManager()->trigger('pre.'.__FUNCTION__,$sql,$data,$shortCircuit);
+        //$results = $this->getEventManager()->trigger($event,$shortCircuit);
+        $this->getEventManager()->setEventPrototype($event);
+        $results = $this->getEventManager()->triggerEventUntil($shortCircuit,$event);
+
+        if ($results->stopped()) {
+    	   $dataEm = $results->last();
+    	}
+
+        if($dataEm instanceof \ArrayObject) {
+            $datapreupdate = $dataEm->getArrayCopy();
+
+        } elseif(is_array($dataEm)) {
+             $datapreupdate = $dataEm;
+
+        }
+        else{
+            if($data instanceof \ArrayObject){
+                $datapreupdate = $data->getArrayCopy();
+            }
+            else{
+                $datapreupdate = data;
+            }
+        }
+
+    	$sql = $this->getAdapter();
+    	$update = $sql->update();
+    	$update->table($this->table);
+       	$update->set($datapreupdate);
+
+    	$update->where($where);
+    	$statement = $sql->prepareStatementForSqlObject($update);
+    	//echo $sql->getSqlStringForSqlObject($update);
+
+    	$this->getAdapter()->getAdapter()->getDriver()->getConnection()->beginTransaction();
+
+    	$result = $statement->execute();
+    	if($result){
+    	     $this->getAdapter()->getAdapter()->getDriver()->getConnection()->commit();
+    	     $event->setName('post.'.__FUNCTION__);
+    	     $event->setTarget($sql);
+    	     $event->setParams($data);
+    	     $event->setContext($contextParams);
+    	     $event->stopPropagation(false); // Clear before triggering
+    	     //$this->getEventManager()->triggerEventUntil($shortCircuit, $event);
+    	     //$this->getEventManager()->trigger('post.'.__FUNCTION__,$sql,$data);
+    	     //$results = $this->getEventManager()->trigger($event,$shortCircuit);
+    	     $this->getEventManager()->setEventPrototype($event);
+    	     $results = $this->getEventManager()->triggerEventUntil($shortCircuit,$event);
+    	     return $result;
+    	 }
+
+    	 $this->getAdapter()->getAdapter()->getDriver()->getConnection()->rollback();
+
+    	 return false;
+    }
+
+    /**
+     *
+     * @param array $data
+     * @param array || object $where
+     */
+    public function insert($data,$contextParams=null){
+        $event = new Zf2datatableEvent();
+        $sql = $this->getAdapter();
+        $sql->setTable($this->table);
+
+        $insert = $sql->insert();
+
+
+        $shortCircuit = function ($r){
+            if (is_array($r) || $r instanceof \ArrayObject) {
+                return true;
+            }
+            return false;
+        };
+
+        $event->setName('pre.'.__FUNCTION__);
+        $event->setTarget($sql);
+        $event->setParams($data);
+        $event->setContext($contextParams);
+        $event->stopPropagation(false); // Clear before triggering
+        //$results = $this->getEventManager()->triggerEventUntil($shortCircuit, $event);
+        //$results= $this->getEventManager()->trigger('pre.'.__FUNCTION__,$sql,$data,$shortCircuit);
+        //$results = $this->getEventManager()->trigger($event,$shortCircuit);
+        $this->getEventManager()->setEventPrototype($event);
+        $results = $this->getEventManager()->triggerEventUntil($shortCircuit,$event);
+
+    	if ($results->stopped()) {
+    	   $dataEm = $results->last();
+    	}
+
+        if($dataEm instanceof \ArrayObject) {
+            $datapreinsert = $dataEm->getArrayCopy();
+
+        } elseif(is_array($dataEm)) {
+             $datapreinsert = $dataEm;
+
+        }
+        else{
+            if($data instanceof \ArrayObject){
+                $datapreinsert = $data->getArrayCopy();
+            }
+            else{
+                $datapreinsert = data;
+            }
+        }
+
+
+    	$insert->into($this->table);
+
+    	$insert->values($datapreinsert);
+    	$statement = $sql->prepareStatementForSqlObject($insert);
+
+        //echo $sql->getSqlStringForSqlObject($insert);
+    	$this->getAdapter()->getAdapter()->getDriver()->getConnection()->beginTransaction();
+    	$result = $statement->execute();
+
+    	if($result){
+    	    $lastInsertId = $this->getAdapter()->getAdapter()->getDriver()->getLastGeneratedValue();
+    	    $this->getAdapter()->getAdapter()->getDriver()->getConnection()->commit();
+    	    //$this->getEventManager()->trigger('post.'.__FUNCTION__,$sql,array("id"=>$lastInsertId,"data"=>$data));
+    	    $event->setName('post.'.__FUNCTION__);
+    	    $event->setTarget($sql);
+    	    $event->setParams(array("id"=>$lastInsertId,"data"=>$data));
+    	    $event->setContext($contextParams);
+    	    $event->stopPropagation(false); // Clear before triggering
+    	    $this->getEventManager()->triggerEvent($event);
+    	    return $result;
+    	}
+
+    	$this->getAdapter()->getAdapter()->getDriver()->getConnection()->rollback();
+    	return false;
+    }
+
+    /**
+     *
+     * @param array || object $where
+     */
+    public function delete($where,$contextParams=null){
+    	$event = new Zf2datatableEvent();
+   	    $event->setName('pre.'.__FUNCTION__);
+   	    //$event->setTarget($sql);
+   	    //$event->setParams($data);
+   	    $event->setContext($contextParams);
+   	    $event->stopPropagation(false); // Clear before triggering
+   	    $this->getEventManager()->triggerEvent($event);
+   	    //$this->getEventManager()->trigger('pre'.__FUNCTION__,null,array());
+
+   	    $sql = $this->getAdapter();
+   	    $delete = $sql->delete();
+    	$delete->from($this->table)->where($where);
+    	$statement = $sql->prepareStatementForSqlObject($delete);
+    	$this->getEventManager()->trigger('post'.__FUNCTION__,null,array());
+
+    	$this->getAdapter()->getAdapter()->getDriver()->getConnection()->beginTransaction();
+    	$result = $statement->execute();
+    	if($result){
+    	    $this->getAdapter()->getAdapter()->getDriver()->getConnection()->commit();
+    	    $event->setName('post.'.__FUNCTION__);
+    	    //$event->setTarget($sql);
+    	    //$event->setParams($data);
+    	    $event->setContext($contextParams);
+    	    $event->stopPropagation(false); // Clear before triggering
+    	    $this->getEventManager()->triggerEvent($event);
+    	    return $result;
+    	}
+
+    	$this->getAdapter()->getAdapter()->getDriver()->getConnection()->rollback();
+
+         return false;
+    }
+
+    /**
+     *
+     * @return array  multitype:multitype:
+     */
+    public function getMetaDataInfo(){
+       if($this->getServiceLocator()->has('service_cache') && $this->getServiceLocator()->get('cache_metadata')['mode']=='enabled'){
+            $result = $this->getCache()->getItem($this->table);
+
+            if (!empty($result)) {
+
+                return $result;
+            }
+        }
+
+
+    	$metaData 	= new \Laminas\Db\Metadata\Metadata($this->getAdapter()->getAdapter());
+    	$table  	= $metaData->getTable($this->table);
+    	$columns    = array();
+
+
+    	foreach ($table->getColumns() as $col){
+    	    $columns[$col->getName ()]= array('name'=>$col->getName (), 'datatype'=>strtoupper($col->getDataType ()));
+    	}
+
+
+
+    	//var_dump($columns);
+    	$contraints = $table->getConstraints();
+    	$result = [["columns"=>$columns],
+    			["constraints"=>$contraints]];
+
+
+
+    	if($this->getServiceLocator()->has('service_cache') && $this->getServiceLocator()->get('cache_metadata')['mode']=='enabled'){
+    	    $this->getCache()->setItem($this->table,$result);
+    	    # Tag the key when saving
+    	    if(method_exists($this->getCache(), 'setTags')){
+    	       $this->getCache()->setTags($this->table, array($this->table));
+    	    }
+    	}
+
+
+
+    	return $result;
+    }
+
+
+    public function getForeignKey(){
+
+        if($this->getServiceLocator()->has('service_cache') && $this->getServiceLocator()->get('cache_metadata')['mode']=='enabled'){
+            $this->foreign_key = $this->getCache()->getItem($this->table.'_ForeignKey');
+            if (!empty($this->foreign_key) || $this->getCache()->hasItem($this->table.'_ForeignKey')) {
+                return $this->foreign_key;
+            }
+        }
+
+        $metaData 	= new \Laminas\Db\Metadata\Metadata($this->getAdapter()->getAdapter());
+        $table  	= $metaData->getTable($this->table);
+        $contraints = $table->getConstraints();
+        foreach($contraints as $contraint){
+
+            if ($contraint->getType()== self::FOREIGN_KEY){
+                $this->foreign_key[implode("_",$contraint->getColumns())] = array(
+                    "column"=>$contraint->getColumns(),
+                    "tableref"=>$contraint->getReferencedTableName(),
+                    "columnref"=>$contraint->getReferencedColumns());
+            }
+        }
+
+        if($this->getServiceLocator()->has('service_cache') && $this->getServiceLocator()->get('cache_metadata')['mode']=='enabled'){
+            $this->getCache()->setItem($this->table.'_ForeignKey',$this->foreign_key);
+            # Tag the key when saving
+            if(method_exists($this->getCache(), 'setTags')){
+                 $this->getCache()->setTags($this->table.'_ForeignKey', array($this->table));
+            }
+
+        }
+
+
+        return $this->foreign_key;
+    }
+
+
+
+}

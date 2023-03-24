@@ -1,0 +1,141 @@
+<?php
+$paginatorOnclick = 'document.forms[\'form_'.$this->gridId.'\'].elements[\'' . $this->parameterNames['currentPage'] . '\'].value = %s;';
+$paginatorOnclick.= 'document.forms[\'form_'.$this->gridId.'\'].submit(); return false;';
+?>
+<div class="pagination-wrapper"  style="margin: 0px;">
+
+    <?php if (count($this->pagesInRange) > 1): ?>
+        <ul class="pagination">
+
+            <!-- to first page -->
+            <?php if($this->current > 1):?>
+                <li class="page-item"><a class="page-link"  href="<?php echo
+                    $this->url(null,
+                        array(),
+                        array(
+                            'query' => array_merge($this->activeParameters, array(
+                                $this->parameterNames['currentPage'] => 1
+                            ),array("gridID"=>$this->gridId)
+                            )
+                        ),
+                        true
+                    );?>
+                "  onclick="<?php echo sprintf($paginatorOnclick, 1);?>">
+                        &laquo;
+                    </a>
+                </li>
+            <?php else: ?>
+                <li class="page-item disabled">
+                    <a class="page-link"  href="#">&laquo;</a>
+                </li>
+            <?php endif;?>
+
+            <!-- one page left -->
+            <?php if($this->current > 1): ?>
+                <li class="page-item"><a class="page-link"  href="<?php echo
+                    $this->url(null,
+                        array(),
+                        array(
+                            'query' => array_merge($this->activeParameters, array(
+                                $this->parameterNames['currentPage'] => $this->current - 1
+                            ),array("gridID"=>$this->gridId)
+                            )
+                        ),
+                        true
+                    );?>
+                "  onclick="<?php echo sprintf($paginatorOnclick, $this->current - 1);?>">
+                        &lt;
+                    </a>
+                </li>
+            <?php else: ?>
+                <li class="page-item disabled">
+                    <a class="page-link"  href="#">&lt;</a>
+                </li>
+            <?php endif;?>
+
+            <!-- general pages in rnage -->
+            <?php foreach($this->pagesInRange as $page):?>
+                <?php
+                $add = '';
+                if($this->current === $page){
+                    $add = 'class="page-item active"';
+                }
+                else{
+                    //$add = 'class="page-item';
+                }
+
+                if($this->current != $page){
+                    $url = $this->url($this->matchedRouteName,
+                        array(),
+                        array(
+                            'query' => array_merge($this->activeParameters, array(
+                                $this->parameterNames['currentPage'] => $page
+                            ),array("gridID"=>$this->gridId)
+                            )
+                        ),
+                        true
+                    );
+                } else{
+                    $url = '#';
+                }
+                ?>
+                <li <?php echo $add; ?>  >
+                    <a class="page-link" aria-current="page"  href="<?php echo $url; ?>" onclick="<?php echo sprintf($paginatorOnclick, $page);?>">
+                        <?php echo $page; ?>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+
+            <!-- one page right -->
+            <?php if($this->current < $this->pageCount): ?>
+                <li class="page-item">
+                    <a class="page-link"  href="<?php echo
+                    $this->url($this->matchedRouteName,
+                        array(),
+                        array(
+                            'query' => array_merge($this->activeParameters, array(
+                                $this->parameterNames['currentPage'] => $this->current + 1
+                            ),array("gridID"=>$this->gridId)
+                            )
+                        ),
+                        true
+                    );?>
+                " onclick="<?php echo sprintf($paginatorOnclick, $this->current + 1);?>">
+                        &gt;
+                    </a>
+                </li>
+
+            <?php else: ?>
+                <li class="page-item disabled">
+                    <a class="page-link"  href="#">&gt;</a>
+                </li>
+            <?php endif;?>
+
+            <!-- to last page -->
+            <?php if($this->current < $this->pageCount): ?>
+                <li class="page-item">
+                    <a class="page-link"  href="<?php echo
+                    $this->url($this->matchedRouteName,
+                        array(),
+                        array(
+                            'query' => array_merge($this->activeParameters, array(
+                                $this->parameterNames['currentPage'] => $this->pageCount
+                            ),array("gridID"=>$this->gridId)
+                            )
+                        ),
+                        true
+                    );?>
+                " onclick="<?php echo sprintf($paginatorOnclick, $this->pageCount);?>">
+                        &raquo;
+                    </a>
+                </li>
+
+            <?php else: ?>
+                <li class="page-link" class="page-item disabled">
+                    <a href="#">&raquo;</a>
+                </li>
+            <?php endif;?>
+
+        </ul>
+    <?php endif; ?>
+</div>
