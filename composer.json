@@ -32,6 +32,6 @@
     "codeplex/phpexcel" : "~1.8",
     "tecnick.com/tcpdf" : "~6.0"
   },
-  "license" : "WTFPL",
+  "license" : "BSD-3-Clause",
   "type" : "library"
 }
