@@ -1,5 +1,5 @@
 {
-  "name" : "costsrl/Zf2datatable",
+  "name" : "costsrl/zf2datatable",
   "description" : "Zend Framework 2 Module that provides a datagrid for different datasources and output formats",
   "require" : {
     "php" : ">=7.0"
